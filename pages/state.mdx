@@ -1,0 +1,250 @@
+import Callout from 'nextra-theme-docs/callout'
+
+# State updates after async functions
+
+Most of the time when we're executing an async function we're waiting for it to finish before we can update some state.
+One of the things we usually forget to do is to check whether the component is still mounted before we can update the
+state. This can result in a warning in a console if our component was unmounted by then.
+
+<Callout emoji="⚠️">
+  Can't perform a React state update on an unmounted component. This is a no-op, but it indicates a memory leak in your
+  application. To fix, cancel all subscriptions and asynchronous tasks in a useEffect cleanup function.
+</Callout>
+
+Using our previous example this is what we need to do to prevent this from happening:
+
+```jsx highlight=5,10,13,20,21,22,23,24,25,26
+const RecoverPassword = () => {
+  const history = useHistory();
+  const timeout = useTimeout();
+  const interval = useInterval();
+  const isMountedRef = useRef(false); // Can be set to `true` if our app is no-SSR, not recommended
+  const [seconds, setSeconds] = useState(5);
+
+  const fireEmailConfirmation = useCallback(async () => {
+    await authService.emailConfirm();
+    if (isMountedRef.current) {
+      timeout(() => history.replace('/'), 5000);
+      interval(() => setSeconds(prevSeconds => prevSeconds - 1), 1000);
+    }
+  }, [history, interval, timeout]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  useEffect(() => {
+    isMountedRef.current = true; // Can be avoided in case of no-SSR rendering, not recommended
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  return (
+    // ...
+  );
+};
+```
+
+This example has one issue that can be a problem if we're using `isMounted` reference in the render function. The
+problem with references is that they won't trigger re-render which would not cause the render function to be called
+again once our reference gets changed.
+
+```jsx highlight=14,18
+const App = () => {
+  const isMountedRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMountedRef.current) {
+      console.log('I am mounted:', isMountedRef.current); // `true`
+    }
+  }, []);
+
+  console.log('isMountedRef.current:', isMountedRef.current); // `false`
+
+  return (
+    // ...
+  );
+};
+```
+
+The solution to this problem can be by using state instead of reference, here's an example:
+
+```jsx highlight=14,18
+const App = () => {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+
+    return () => {
+      setIsMounted(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMounted) {
+      console.log('I am mounted:', isMounted); // `true`
+    }
+  }, [isMounted]);
+
+  console.log('isMounted', isMounted); // `false` then `true`
+
+  return (
+    // ...
+  );
+};
+```
+
+<Callout emoji="📢">
+  It is very recommended to use `eslint-plugin-react-hooks` and fix all errors (even warnings).
+  `react-hooks/exhaustive-deps` rules make sure hook dependencies are passed properly.
+</Callout>
+
+While this solution solves our problem of missing re-render, we can still have an edge case problem. References are not
+passed to hooks as dependencies but the state should if it's used inside the hook. That means our hook will be called
+when the state changes.
+
+```jsx highlight=4,5,6,7,8,9,10,11,12,13,14,15
+const Filters = () => {
+  const [isMounted, setIsMounted] = useState(false);
+
+  const getItems = useCallback(async () => {
+    // Gets called twice because `isMounted` changes after first call
+    const items = await service.getItems({
+      filters,
+      order,
+      page,
+      search
+    });
+    if (isMounted) {
+      setItems(items);
+    }
+  }, [filters, isMounted, order, page, search]);
+
+  useEffect(() => {
+    getItems();
+  }, [getItems]);
+
+  useEffect(() => {
+    setIsMounted(true);
+
+    return () => {
+      setIsMounted(false);
+    };
+  }, []);
+
+  return (
+    // ...
+  );
+};
+```
+
+All these problems resulted in a solution where we use reference but trigger re-render by updating a state that is not
+used anywhere. This custom hook is a bit different as it returns function inside which we know component is still
+mounted:
+
+```jsx highlight=6,10,17,18,19,20,21
+// hooks/useIsMounted.js
+import { useCallback, useEffect, useRef } from 'react';
+
+export default () => {
+  const isMounted = useRef(false);
+  const [, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    setIsMounted(true);
+
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  return useCallback(cb => {
+    if (isMounted.current) {
+      cb();
+    }
+  }, []);
+};
+```
+
+On our previous example we can see how this can be used:
+
+```jsx highlight=3,7,11,12,15,16
+const RecoverPassword = () => {
+  const history = useHistory();
+  const isMounted = useIsMounted();
+  const timeout = useTimeout();
+  const interval = useInterval();
+  const [seconds, setSeconds] = useState(5);
+  const [showSuccessMsg, setShowSuccessMsg] = useState(false);
+
+  const fireEmailConfirmation = useCallback(async () => {
+    await authService.emailConfirm();
+    isMounted(() => {
+      setShowSuccessMsg(true);
+      timeout(() => history.replace('/'), 5000);
+      interval(() => setSeconds(prevSeconds => prevSeconds - 1), 1000);
+    });
+  }, [history, interval, isMounted, timeout]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  return (
+    // ...
+  );
+};
+```
+
+We should also make sure the component is mounted even when we're handling state update in `catch` or `finally` block:
+
+```jsx highlight=20,22
+const RecoverPassword = () => {
+  const history = useHistory();
+  const isMounted = useIsMounted();
+  const timeout = useTimeout();
+  const interval = useInterval();
+  const [fetching, setFetching] = useState(true);
+  const [seconds, setSeconds] = useState(5);
+  const [showSuccessMsg, setShowSuccessMsg] = useState(false);
+  const [showFormError, setShowFormError] = useState(false);
+
+  const fireEmailConfirmation = useCallback(async () => {
+    try {
+      await authService.emailConfirm();
+      isMounted(() => {
+        setShowSuccessMsg(true);
+        timeout(() => history.replace('/'), 5000);
+        interval(() => setSeconds(prevSeconds => prevSeconds - 1), 1000);
+      });
+    } catch (e) {
+      isMounted(() => handleErrors(e));
+    } finally {
+      isMounted(() => setFetching(false));
+    }
+  }, [history, interval, isMounted, timeout]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  return (
+    // ...
+  );
+}:
+```
+
+Although this solution works and solves all the issues that we have, problem is that this solution is considered an
+antipattern or deprecated solution. What is recommended is to cancel or abort a request.

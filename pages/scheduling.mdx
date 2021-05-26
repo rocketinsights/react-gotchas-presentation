@@ -1,0 +1,184 @@
+# `setTimeout` and `setInterval`
+
+Quite often while developing we need to schedule some task, either that task needs to be executed after a delay
+or it needs to be repeated every interval. A lot of the times these 2 functions are used in the code and keep executing
+even after our component has been unmounted. One of the problems using these two functions is to keep in mind that we
+need to clear them after they're no longer needed. This task is repetitive and very easy to forget.
+
+This is an example we often have on email confirmation pages. We usually want to show the message for a short period of
+time after which we would redirect back to the login page.
+
+
+```jsx highlight=7,8,9,16,17,18,19,20,21,22
+const RecoverPassword = () => {
+  const history = useHistory();
+  const timeoutRef = useRef();
+
+  const fireEmailConfirmation = useCallback(async () => {
+    await authService.emailConfirm();
+    timeoutRef.current = setTimeout(() => {
+      history.replace('/');
+    }, 5000);
+  }, [history]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    // ...
+  );
+};
+```
+
+This same example can be extended by adding a counter to let our users know how much time is left before we would
+redirect our page.
+
+```jsx highlight=12,13,14,26,27,28
+const RecoverPassword = () => {
+  const history = useHistory();
+  const timeoutRef = useRef();
+  const intervalRef = useRef();
+  const [seconds, setSeconds] = useState(5);
+
+  const fireEmailConfirmation = useCallback(async () => {
+    await authService.emailConfirm();
+    timeoutRef.current = setTimeout(() => {
+      history.replace('/');
+    }, 5000);
+    intervalRef.current = setInterval(() => {
+      setSeconds(prevSeconds => prevSeconds - 1);
+    }, 1000);
+  }, [history]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+    };
+  }, []);
+
+  return (
+    // ...
+  );
+};
+```
+
+We can see that this becomes repetitive very quickly and easy to forget to clear scheduled timers. This is a perfect
+opportunity to create a custom hook that can be reused across the application.
+
+```jsx
+// hooks/useTimeout.js
+import { useCallback, useEffect, useRef } from 'react';
+
+export default () => {
+  const timeoutRef = useRef();
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  return useCallback((func, delay) => {
+    timeoutRef.current = setTimeout(func, delay);
+  }, []);
+};
+
+```
+
+```jsx
+// hooks/useInterval.js
+import { useCallback, useEffect, useRef } from 'react';
+
+export default () => {
+  const intervalRef = useRef();
+
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, []);
+
+  return useCallback((func, delay) => {
+    intervalRef.current = setInterval(func, delay);
+  }, []);
+};
+```
+
+Now that we have these custom hooks set up we can use them in our previous code to reduce the code, boilerplate and a
+number of things we need to worry about.
+
+```jsx highlight=3,4,9,10,11,17
+const RecoverPassword = () => {
+  const history = useHistory();
+  const timeout = useTimeout();
+  const interval = useInterval();
+  const [seconds, setSeconds] = useState(5);
+
+  const fireEmailConfirmation = useCallback(async () => {
+    await authService.emailConfirm();
+    timeout(() => history.replace('/'), 5000);
+    interval(() => setSeconds(prevSeconds => prevSeconds - 1), 1000);
+  }, [history, interval, timeout]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  // No need to clear scheduled timers anymore
+
+  return (
+    // ...
+  );
+};
+```
+
+There is one thing to take notice of here. If we want to use these timers multiple times within the same component, we will
+have to call the same custom hook as many times as needed.
+
+```jsx highlight=3,4,7,11,12
+const RecoverPassword = () => {
+  const history = useHistory();
+  const messageTimeout = useTimeout();
+  const redirectTimeout = useTimeout();
+  const interval = useInterval();
+  const [seconds, setSeconds] = useState(5);
+  const [message, setMessage] = useState('');
+
+  const fireEmailConfirmation = useCallback(async () => {
+    await authService.emailConfirm();
+    messageTimeout(() => setMessage('Redirecting...'), 4000);
+    redirectTimeout(() => history.replace('/'), 5000);
+    interval(() => setSeconds(prevSeconds => prevSeconds - 1), 1000);
+  }, [history, interval, timeout]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  return (
+    // ...
+  );
+};
+```

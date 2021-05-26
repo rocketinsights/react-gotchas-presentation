@@ -1,0 +1,68 @@
+# Using `debounce`
+
+A lot of times we don't want to trigger a function at the exact moment when we do something that should make a request.
+Sometimes we need a delay. For instance, when we're moving Google map, we want to trigger the request after a delay,
+let's say a second after we've stopped moving the map. If we're typing in the search bar or autocomplete input, we don't
+want to fetch data immediately, a lot of time we want to do it with the delay, after we have stopped typing. These are
+just a few examples of how the lodash `_.debounce` can be used in cases like this:
+
+```jsx highlight=1,16,18
+const debouncedFetch = useCallback(_.debounce(async searchText => {
+  setDropdownResults([]);
+  setFetching(true);
+  setShowDropdown(true);
+
+  const results = await service.getSearchResults(`/api/search?q=${searchText}`);
+  setDropdownResults(results);
+  setFetching(false);
+}, 1000), []);
+
+const handleOnChange = e => {
+  const value = e.target.value;
+  setSearchText(value);
+
+  if (value.length > 2) {
+    debouncedFetch(value);
+  } else {
+    debouncedFetch.cancel();
+    setShowDropdown(false);
+    setDropdownResults([]);
+  }
+};
+```
+
+Example below is tied to Google Map API, difference is in using `useMemo` instead. Basically, we want optimized/cached
+value instead of a function. Since JavaScript has first-class functions, `useCallback(fn, deps)` is equivalent to
+`useMemo(() => fn, deps)`.
+
+```jsx highlight=1,17,25
+const handleBoundsChanged = useMemo(() =>
+  _.debounce(() => {
+    const ne = mapRef.current.getBounds().getNorthEast();
+    const sw = mapRef.current.getBounds().getSouthWest();
+    setCoordinates({
+      nwLat: ne.lat(),
+      nwLng: sw.lng(),
+      seLat: sw.lat(),
+      seLng: ne.lng(),
+    });
+  }, BOUNDS_CHANGED_DEBOUNCE),
+  []
+);
+
+useEffect(() => {
+  return () => {
+    handleBoundsChanged.cancel();
+  };
+}, [handleBoundsChanged]);
+
+return (
+  <GoogleMap
+    center={center}
+    mapContainerClassName={styles.mapContainer}
+    onBoundsChanged={handleBoundsChanged}
+    onLoad={handleOnLoad}
+    zoom={DEFAULT_ZOOM}
+  >
+);
+```

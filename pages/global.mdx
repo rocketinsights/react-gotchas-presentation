@@ -1,0 +1,37 @@
+# Globally handling errors
+
+Sometimes we want to handle Promise errors globally instead of per request base. That is possible to do with an event
+that catches all unhandled rejected promises:
+
+```jsx
+const App = () => {
+  const [showError, setShowError] = useState(false);
+
+  const handlePromiseRejection = e => {
+    e.preventDefault();
+
+    if (e.name === 'AbortError') {
+      return;
+    }
+
+    return setShowError(true);
+  };
+
+  useEffect(() => {
+    window.addEventListener('unhandledrejection', handlePromiseRejection);
+
+    return () => {
+      window.removeEventListener('unhandledrejection', handlePromiseRejection);
+    };
+  }, []);
+
+  return (
+    // ...
+  );
+};
+```
+
+While this works in most cases, it usually breaks development mode in both CRA and NextJS. The reason is probably that
+both frameworks use the same approach to catch promise errors and show custom error modal with the error code lines in
+development mode. That doesn't happen in production so this code would still work and catch errors globally without any
+issues. Custom libraries like `axios` have interceptors to achieve similar functionality.

@@ -1,0 +1,90 @@
+import Image from 'next/image';
+
+# Multiple request at same API endpoint
+
+Most of the time when we fire a request we would have spinners preventing us to fire the same request again until the
+previous one is finished. A lot of the time, especially in forms, we prevent firing by disabling submit buttons to fire
+the request again.
+
+<table><tr><td>
+![Landscape](/filters.png)
+</td></tr></table>
+
+There are examples when we can't use these approaches and we have to allow a user to fire multiple requests at the same
+endpoint in a short period. One of those examples would be an autocomplete input that fetches suggestions on every
+change. Another would be fetching a list of filtered results depending on the filter manipulation.
+
+```jsx
+const Filters = () => {
+  const isMounted = useIsMounted();
+  const [filters, setFilters] = useState([]);
+  const [order, setOrder] = useState(null);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState(null);
+
+  const getItems = useCallback(async () => {
+    const items = await service.getItems({
+      filters,
+      order,
+      page,
+      search
+    });
+    isMounted(() => setItems(items)); // We're not checking the order of responses
+  }, [filters, isMounted, order, page, search]);
+
+  useEffect(() => {
+    getItems();
+  }, [getItems]);
+
+  return (
+    // ...
+  );
+};
+```
+
+In these cases, especially if the connection is unstable or slow, we can potentially get responses in a different order
+than the requests. This would result in wrong filtered results that do not correspond to the filters selected. We should
+prevent this from happening.
+
+```jsx highlight=1,2,3,4,8,15,16,21,23,25
+const timedRequest = async (data, timestamp) => ({
+  items: await service.getItems(data),
+  timestamp
+});
+
+const Filters = () => {
+  const isMounted = useIsMounted();
+  const timestampRef = useRef();
+  const [filters, setFilters] = useState([]);
+  const [order, setOrder] = useState(null);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState(null);
+
+  const getItems = useCallback(async () => {
+    timestampRef.current = new Date().getTime();
+    const { items, timestamp } = await timedRequest({
+      filters,
+      order,
+      page,
+      search
+    }, timestampRef.current);
+    isMounted(() => {
+      if (timestampRef.current === timestamp) {
+        setItems(items);
+      }
+    });
+  }, [filters, isMounted, order, page, search]);
+
+  useEffect(() => {
+    getItems();
+  }, [getItems]);
+
+  return (
+    // ...
+  );
+};
+```
+
+This solution works when all the requests finish up successfully. If one of the requests fails and especially if one of
+the outdated requests fails, we would have to update the logic to something more profound to handle errors specifically.
+But, we won't cover that as there is a better solution by canceling the request.

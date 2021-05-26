@@ -1,0 +1,120 @@
+# Implement `AbortController`
+
+All solutions we have reviewed so far are either deprecated, antipattern, or don't cover all the angles. Event the React
+page blog introduces a function for cancelable requests. But with the introduction of `AbortController` we have gained
+an API solution to cancel the ongoing request before it finishes. Let's see how can we implement this API to replace
+previous solutions:
+
+```jsx highlight=5,13,14,20,21,22,32,33,34,35,36
+const RecoverPassword = () => {
+  const history = useHistory();
+  const timeout = useTimeout();
+  const interval = useInterval();
+  const abortControllerRef = useRef();
+  const [fetching, setFetching] = useState(true);
+  const [seconds, setSeconds] = useState(AUTH_REDIRECT_DURATION);
+  const [showSuccessMsg, setShowSuccessMsg] = useState(false);
+  const [showFormError, setShowFormError] = useState(false);
+
+  const fireEmailConfirmation = useCallback(async () => {
+    try {
+      abortControllerRef.current = new AbortController();
+      await authService.emailConfirm(null, { signal: abortControllerRef.current.signal });
+      setShowSuccessMsg(true);
+      timeout(() => history.replace('/'), 5000);
+      interval(() => setSeconds(prevSeconds => prevSeconds - 1), 1000);
+      setFetching(false);
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        return;
+      }
+      handleErrors(e);
+      setFetching(false);
+    }
+  }, [history, interval, timeout]);
+
+  useEffect(() => {
+    fireEmailConfirmation();
+  }, [fireEmailConfirmation]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort?.();
+    };
+  }, []);
+
+  return (
+    // ...
+  );
+}:
+```
+
+In this case, if the component gets unmounted before the request is finished, we would abort the request which would
+throw an error and execute a `catch` block. There, we just need to check if the error is thrown by the abort controller
+in which case we won't handle any errors. The downside of this approach is the limited usage of `finally` block.
+
+A similar approach can be taken when we have multiple calls in a short period at the same endpoint. The solution can go
+something i these lines:
+
+```jsx highlight=2,10,11,18,22,23,24,32,33,34,35,36
+const Filters = () => {
+  const prevAbortControllerRef = useRef();
+  const [filters, setFilters] = useState([]);
+  const [order, setOrder] = useState(null);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState(null);
+
+  const getItems = useCallback(async () => {
+    try {
+      prevAbortControllerRef.current?.abort?.();
+      prevAbortControllerRef.current = new AbortController();
+      const items = await service.getItems({
+        filters,
+        order,
+        page,
+        search
+      }, {
+        signal: prevAbortControllerRef.current.signal
+      });
+      setItems(items);
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        return;
+      }
+    }
+  }, [filters, order, page, search]);
+
+  useEffect(() => {
+    getItems();
+  }, [getItems]);
+
+  useEffect(() => {
+    return () => {
+      prevAbortControllerRef.current?.abort?.();
+    };
+  }, []);
+
+  return (
+    // ...
+  );
+};
+```
+
+As expected, some of this code can be exported out into a custom hook to tone down some of the boilerplate:
+
+```jsx
+// hooks/useAbortController.js
+import { useEffect, useRef } from 'react';
+
+export default () => {
+  const abortControllerRef = useRef();
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort?.();
+    };
+  }, []);
+
+  return abortControllerRef;
+};
+```
